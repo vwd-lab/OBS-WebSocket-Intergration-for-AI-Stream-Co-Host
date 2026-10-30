@@ -1,0 +1,7 @@
+# Requirements for the OBS static-image share kit.
+obsws-python>=1.7
+python-dotenv>=1.0.0
+rich>=13.0.0
+
+# NOTE: OBS itself is not a Python package. This kit talks to OBS 28+ through
+# its built-in WebSocket server (v5), which must be enabled in OBS.

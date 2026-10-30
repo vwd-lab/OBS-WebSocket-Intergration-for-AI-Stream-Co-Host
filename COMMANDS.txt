@@ -1,0 +1,57 @@
+================================================================================
+ COMMANDS - OBS static-image overlay (standalone share kit)
+================================================================================
+DEMO CONSOLE (python demo_main.py)
+--------------------------------------------------------------------------------
+  say <text>     Show the image, wait as if speaking, then hide it. This is the
+                 behaviour to copy into your bot.
+  show           Show the image now and leave it up.
+  hide           Hide the image now.
+  status         Print enabled / connected / visible / last_error.
+  on             Enable OBS use (connects; image stays hidden until speech).
+  off            Hide the image and disconnect from OBS.
+  help           List commands.
+  quit           Exit (hides the image first).
+
+--------------------------------------------------------------------------------
+ THE API YOUR BOT CALLS (all thread-safe)
+--------------------------------------------------------------------------------
+  overlay.on_ai_speaking()      Show the image. Call immediately before TTS.
+  overlay.on_ai_done()          Hide the image. Call after playback, ideally in
+                                a finally block.
+
+  with overlay.speaking():      Same pair, exception-safe:
+      play_tts()                    show on enter, hide on exit.
+
+  overlay.show() / .hide()      Direct visibility control.
+  overlay.set_visible(True)     Explicit form.
+  overlay.set_enabled(True)     "OBS on": connect; image hidden until speech.
+  overlay.set_enabled(False)    "OBS off": hide + disconnect.
+  overlay.status()              Dict for a dashboard/health check.
+
+  The image is hidden by connect(), so it is never on screen while idle.
+
+--------------------------------------------------------------------------------
+ OBS SETUP (do this once)
+--------------------------------------------------------------------------------
+  1. Tools > WebSocket Server Settings > Enable WebSocket server.
+  2. Note the port (4455) and password.
+  3. In your scene, add an Image source with your static picture.
+  4. Name the source exactly as OBS_SOURCE in .env (case-sensitive).
+  5. Keep it directly in the scene, not inside a group.
+  6. Position/scale it in OBS; this kit only toggles visibility.
+
+OBS 28+ (obs-websocket v5). OBS WebSocket v4 is not supported.
+
+--------------------------------------------------------------------------------
+ WHAT THIS KIT DOES NOT DO
+--------------------------------------------------------------------------------
+  - No PNGTuber frames / talk flap / blink / smug / thinking / listening.
+  - No scene switching, stream start/stop, recording, audio, or filters.
+  - No chat commands. If you want "!obs on/off/status" in chat, call
+    set_enabled()/status() from your own command handler.
+  - No automatic speech detection. The host tells the overlay when speech
+    starts and ends (on_ai_speaking/on_ai_done or speaking()).
+
+The single static image, shown only while talking, is the entire feature.
+================================================================================

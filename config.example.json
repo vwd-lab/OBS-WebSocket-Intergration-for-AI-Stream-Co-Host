@@ -1,0 +1,10 @@
+{
+  "OBS_ENABLED": "1",
+  "OBS_HOST": "localhost",
+  "OBS_PORT": "4455",
+  "OBS_PASSWORD": "",
+  "OBS_SCENE": "Main",
+  "OBS_SOURCE": "Bot Name",
+  "OBS_HIDE_ON_CONNECT": "1",
+  "OBS_TIMEOUT_S": "3.0"
+}
