@@ -1,6 +1,6 @@
 # Changelog — sharing\OBS Websocket (MIT)
 
-Canonical working copy at `C:\Users/bbsti\AI Projects\Project AI Logan\sharing\OBS Websocket`.
+Canonical working copy at `C:\XXXXX\AI Projects\Project AI Logan\sharing\OBS Websocket`.
 
 Framework-agnostic OBS static-image overlay. Transport-only: ships no brain,
 persona, TTS, or voice. Connects to OBS via obs-websocket v5 (OBS 28+) and
