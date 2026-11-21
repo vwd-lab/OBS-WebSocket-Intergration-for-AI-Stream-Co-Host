@@ -46,8 +46,12 @@ framework that has a "bot is speaking" hook.
 
 ### Option A: Radeon AI Co-Host
 
-Call `on_ai_speaking()` / `on_ai_done()` around the TTS playback in
-`Radeon AI Co-Host/main.py`'s `process_message()` or `_speak_event()`.
+Already wired in: the Co-Host shows the image for every line it speaks. Put
+this kit's folder next to the Co-Host's, then set `OBS_ENABLED=1` and the
+`OBS_*` settings in **the Co-Host's own `.env`**. Inside the Co-Host, this
+kit's `.env`, `config.py`, GUI and demo aren't used, only
+`input/obs_overlay.py`. Install this kit's requirements into the Python that
+runs the Co-Host (`python -m pip install -r requirements.txt`).
 
 ### Option B: Any custom framework
 
@@ -62,8 +66,9 @@ Use `demo_main.py` as the template — construct `ObsStaticOverlay`, call
 4. Add an **Image** source (your static picture) directly to the scene you
    stream. Give it the exact name you will use for `OBS_SOURCE`.
 5. Position and scale it in OBS.
-6. Do not put it inside a group; the simple scene-item lookup expects the
-   source directly in the scene.
+6. Put it directly in the scene, or in a group: if it's inside a group, set
+   `OBS_SCENE` to the **group's** name instead of the scene's (OBS looks a
+   group's sources up like a small scene's).
 
 ## Setup you'll still need
 
@@ -80,6 +85,10 @@ OBS_PASSWORD=your-obs-password
 OBS_SCENE=Main
 OBS_SOURCE=Bot Name
 ```
+
+The setup wizard and the GUI write these for you. If you edit `.env` by hand
+and the password contains `#`, quotes or `\`, put it in single quotes:
+`OBS_PASSWORD='abc #1'` (otherwise everything from ` #` on is dropped).
 
 ### 3. Launch
 
@@ -102,8 +111,7 @@ python demo_main.py
 | `obs_gui.py` | tkinter GUI launcher (stdlib only) |
 | `setup_obs_gui.bat` | Interactive setup: prompts, writes `.env`, launches GUI |
 | `start_obs_gui.bat` | Double-click launcher (uses existing `.env`) |
-| `config.json` | Your saved configuration (GUI tracking) |
-| `config.example.json` | Config template |
+| `config.example.json` | List of the settings and their defaults (for reference; the kit reads `.env`) |
 | `.env` | Your runtime configuration (created at runtime, git-ignored) |
 | `.env.example` | Config template |
 | `input/obs_overlay.py` | OBS WebSocket static-image overlay |
@@ -112,7 +120,7 @@ python demo_main.py
 ## Requirements
 
 - Python 3
-- `pip install obsws-python`
+- `python -m pip install -r requirements.txt` (obsws-python, python-dotenv, rich)
 - OBS 28+ with WebSocket server enabled
 
 The GUI (`obs_gui.py`) uses tkinter only, so no extra packages are needed

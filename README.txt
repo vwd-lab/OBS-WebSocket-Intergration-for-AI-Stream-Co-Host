@@ -52,8 +52,8 @@ host bot down.
      to appear). Name it exactly what you will put in OBS_SOURCE below.
      Position/scale it in the scene; this kit only toggles visibility, it does
      not move or resize anything.
-  5. Keep the image inside the scene itself. Putting it inside a group is not
-     supported by the simple scene-item lookup.
+  5. Keep the image directly in the scene, or in a group. If it is inside a
+     group, put the GROUP's name in OBS_SCENE instead of the scene's name.
 
 OBS 28+ is required (obs-websocket v5). The old v4 protocol is not supported.
 
@@ -73,6 +73,13 @@ Fill in:
 
 `OBS_SCENE` and `OBS_SOURCE` are case-sensitive. `OBS_SOURCE` is the source
 name, not the image file path.
+
+If the password contains #, quotes or \, put it in single quotes:
+OBS_PASSWORD='abc #1'  (otherwise everything from " #" on is dropped). The
+setup wizard and the GUI do this for you.
+
+Using it inside the Radeon AI Stream Co-Host? Then these OBS_* settings go in
+the Co-Host's own .env, not this one.
 
 --------------------------------------------------------------------------------
  3) RUN THE DEMO
@@ -151,9 +158,16 @@ See INTEGRATION.md for the full tables.
       Wrong OBS_PASSWORD. Copy it from Tools > WebSocket Server Settings.
 
   "source 'X' not found in scene 'Y'"
-      The source name or scene name is wrong (case-sensitive), the source is
-      not an Image/Media source, or it is inside a group. Add it directly to
-      the scene with the exact name.
+      The source name or scene name is wrong (case-sensitive), or the source
+      is not in that scene. If it is inside a group, put the group's name in
+      OBS_SCENE.
+
+  "the obsws-python package isn't installed"
+      Run  python -m pip install -r requirements.txt  in this folder, with the
+      same Python that runs the bot.
+
+  ".env settings are being IGNORED"
+      python-dotenv isn't installed. Same fix: pip install -r requirements.txt.
 
   Image never appears
       OBS_ENABLED=0, the bot never called on_ai_speaking(), or the source is
@@ -172,7 +186,7 @@ See INTEGRATION.md for the full tables.
 --------------------------------------------------------------------------------
  INTEGRATION NOTE
 --------------------------------------------------------------------------------
-input/obs_overlay.py imports only the stdlib, rich, and (lazily) obsws-python.
+input/obs_overlay.py imports only the stdlib, rich (optional), and (lazily) obsws-python.
 It reads no config and no environment variables. config.py and demo_main.py
 exist to make the standalone demo run.
 

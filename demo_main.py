@@ -18,13 +18,16 @@ import sys
 import time
 
 import config
-from input.obs_overlay import ObsStaticOverlay
+# The overlay's print: colours when `rich` is installed, plain text otherwise
+# (Python's own print showed the colour tags as text: "[magenta]SPEAKING").
+# _plain shows typed text exactly as written, brackets included.
+from input.obs_overlay import ObsStaticOverlay, _plain, print
 
 
 def say(overlay, text):
     """Pretend to speak for a moment, showing the image only while talking."""
     seconds = max(1.0, min(10.0, len(text) / 12.0))
-    print(f"[magenta]SPEAKING -> {text}")
+    print(f"[magenta]SPEAKING -> {_plain(text)}")
     with overlay.speaking():
         time.sleep(seconds)
     print("[dim]done — image hidden")
@@ -61,8 +64,8 @@ def main():
         print("[yellow]OBS is not reachable right now. The demo will retry on")
         print("[yellow]the next command (OBS must be running with WebSocket on).")
 
-    print(f"[cyan]Watching scene '{config.OBS_SCENE}', source "
-          f"'{config.OBS_SOURCE}'.")
+    print(f"[cyan]Watching scene '{_plain(config.OBS_SCENE)}', source "
+          f"'{_plain(config.OBS_SOURCE)}'.")
     print("[cyan]The image starts hidden and only appears while speaking.")
     show_help()
 

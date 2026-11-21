@@ -5,16 +5,130 @@ window. Lets you configure host, port, password, scene, source, and overlay
 behaviour without touching .env by hand.
 """
 
-import json
 import os
 import subprocess
 import sys
+import queue
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 
+# .env reading/writing is shared with the setup wizard, so both quote values
+# the same way and keep your other lines and comments.
+from setup_wizard import HEADER as ENV_HEADER, read_env, write_env
+
+# ---------------------------------------------------------------------------
+# Running the bridge without freezing the window
+# (The same code is used in the OBS, Discord and Kick GUIs.)
+# ---------------------------------------------------------------------------
+
+class BridgeProcess:
+    """Runs a bridge script and collects its output without ever blocking the
+    window.
+
+    Before, the GUI called stdout.readline() on the window's own thread, which
+    waits until the bridge prints something - so the window froze ("Not
+    Responding") whenever the bridge was quiet, and Stop couldn't be clicked.
+    Now a background thread reads the output into a queue and the window only
+    takes what's already there.
+
+    Also:
+    - the bridge's output is unbuffered UTF-8, so lines show up right away and
+      emoji/accents in chat can't crash its printing;
+    - Stop asks the bridge to shut down cleanly first (by closing its stdin;
+      the bridge treats that like Ctrl+C and runs its own cleanup, e.g. hiding
+      the OBS image) and only forces it if it hasn't exited after a grace
+      period. Before, Stop killed it outright and the cleanup never ran.
+    """
+
+    def __init__(self, script, cwd):
+        env = {**os.environ,
+               "PYTHONUNBUFFERED": "1",        # print lines immediately
+               "PYTHONIOENCODING": "utf-8",    # emoji/accents can't crash printing
+               "BRIDGE_GUI_CHILD": "1"}        # "stdin closed" means "please stop"
+        self.proc = subprocess.Popen(
+            [sys.executable or "python", "-u", script],
+            cwd=cwd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=env,
+        )
+        self.pid = self.proc.pid
+        self.finished = False           # True once all output has been read
+        self._lines = queue.Queue()
+        self._stopping = False
+        threading.Thread(target=self._read_output, daemon=True).start()
+
+    def _read_output(self):
+        try:
+            for line in self.proc.stdout:
+                self._lines.put(line.rstrip("\r\n"))
+        except (OSError, ValueError):
+            pass
+        finally:
+            self._lines.put(None)       # end of output
+
+    def poll(self):
+        return self.proc.poll()
+
+    @property
+    def returncode(self):
+        return self.proc.returncode
+
+    def drain(self, limit=500):
+        """Lines printed since the last call. Never waits."""
+        out = []
+        for _ in range(limit):
+            try:
+                item = self._lines.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                self.finished = True
+                break
+            out.append(item)
+        return out
+
+    def request_stop(self, grace_s=8.0):
+        """Ask for a clean stop, then force it after grace_s. Returns at once."""
+        if self._stopping:
+            return
+        self._stopping = True
+        threading.Thread(target=self._stop, args=(grace_s,), daemon=True).start()
+
+    def _stop(self, grace_s):
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.proc.wait(timeout=grace_s)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        self._lines.put(f"[bridge didn't stop within {grace_s:.0f}s - forcing it]")
+        self.proc.terminate()
+        try:
+            self.proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+
+    def stop_and_wait(self, timeout=12.0):
+        """For closing the window: stop and wait (bounded)."""
+        self.request_stop()
+        try:
+            self.proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(ROOT, ".env")
-CONFIG_PATH = os.path.join(ROOT, "config.json")
 
 DEFAULT_ENV = {
     "OBS_ENABLED": "1",
@@ -29,30 +143,25 @@ DEFAULT_ENV = {
 
 
 def load_env():
-    if os.path.exists(ENV_PATH):
-        try:
-            data = {}
-            with open(ENV_PATH, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    k, v = line.split("=", 1)
-                    data[k.strip()] = v.strip()
-            return data
-        except Exception:
-            pass
-    return dict(DEFAULT_ENV)
+    """The settings in .env (with the defaults for any that are missing)."""
+    env = dict(DEFAULT_ENV)
+    try:
+        env.update(read_env(ENV_PATH)[1])
+    except (OSError, UnicodeError):
+        pass
+    return env
 
 
 def save_env(env):
-    lines = ["# OBS WebSocket bridge configuration — written by setup_obs_gui.bat / obs_gui.py",
-             "# Edit by hand or re-run setup_obs_gui.bat to change values.",
-             ""]
-    for k, v in env.items():
-        lines.append(f"{k}={v}")
-    with open(ENV_PATH, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    """Save the window's settings into .env.
+
+    Before, this rewrote .env from scratch with the values unquoted: any other
+    lines or comments were lost, and a password containing " #" was cut short
+    when the bridge read it back. Now it updates .env like the setup wizard
+    does (quoting values that need it) and writes it in one step.
+    """
+    lines, _ = read_env(ENV_PATH)
+    write_env(ENV_PATH, lines, env, ENV_HEADER)
 
 
 class OBSBridgeGUI(tk.Tk):
@@ -206,9 +315,14 @@ class OBSBridgeGUI(tk.Tk):
 
     def _save_env(self):
         env = self._collect_env()
-        save_env(env)
+        try:
+            save_env(env)
+        except OSError as e:
+            messagebox.showerror("Not saved", f"Could not write .env: {e}")
+            return False
         self.env = env
         messagebox.showinfo("Saved", ".env written.")
+        return True
 
     # ------------------------------------------------------------------ bridge process
 
@@ -218,20 +332,16 @@ class OBSBridgeGUI(tk.Tk):
             return
 
         env = self._collect_env()
-        save_env(env)
+        try:
+            save_env(env)
+        except OSError as e:
+            messagebox.showerror("Start failed", f"Could not write .env: {e}")
+            return
         self.env = env
 
         script = os.path.join(ROOT, "demo_main.py")
-        python = sys.executable or "python"
         try:
-            self.process = subprocess.Popen(
-                [python, script],
-                cwd=ROOT,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
+            self.process = BridgeProcess(script, ROOT)
         except Exception as e:
             messagebox.showerror("Start failed", str(e))
             return
@@ -243,41 +353,33 @@ class OBSBridgeGUI(tk.Tk):
         self._log_ui(f"OBS: {env.get('OBS_HOST')}:{env.get('OBS_PORT')} scene={env.get('OBS_SCENE')} source={env.get('OBS_SOURCE')}")
 
     def _stop_bridge(self):
+        """Ask the bridge to stop cleanly. Returns at once; _poll_process
+        notices when it has exited and resets the buttons."""
         if self.process is None:
             return
-        try:
-            self.process.terminate()
-            self.process.wait(timeout=5)
-        except Exception:
-            try:
-                self.process.kill()
-            except Exception:
-                pass
+        self.process.request_stop()
+        self.btn_stop.configure(state=tk.DISABLED)
+        self.status_var.set("Stopping...")
+        self._log_ui("Stopping the bridge (letting it clean up)...")
+
+    def _set_stopped(self):
         self.process = None
         self.btn_start.configure(state=tk.NORMAL)
         self.btn_stop.configure(state=tk.DISABLED)
         self.status_var.set("Stopped")
-        self._log_ui("Bridge stopped.")
 
     # ------------------------------------------------------------------ log plumbing
 
     def _poll_process(self):
-        if self.process is None:
-            self.after(200, self._poll_process)
-            return
-        line = self.process.stdout.readline()
-        if line:
-            self.log_queue.append(line.rstrip("\n"))
-        if self.process.poll() is not None:
-            remaining = self.process.stdout.read()
-            if remaining:
-                for ln in remaining.splitlines():
-                    self.log_queue.append(ln)
-            self._log_ui(f"[process exited code {self.process.returncode}]")
-            self.process = None
-            self.btn_start.configure(state=tk.NORMAL)
-            self.btn_stop.configure(state=tk.DISABLED)
-            self.status_var.set("Stopped")
+        """Show whatever the bridge has printed so far. Never waits for
+        output - the old readline() here froze the window."""
+        proc = self.process
+        if proc is not None:
+            self.log_queue.extend(proc.drain())
+            if proc.finished and proc.poll() is not None:
+                self.log_queue.append(f"[process exited code {proc.returncode}]")
+                self.log_queue.append("Bridge stopped.")
+                self._set_stopped()
         self.after(100, self._poll_process)
 
     def _poll_log_queue(self):
@@ -294,7 +396,10 @@ class OBSBridgeGUI(tk.Tk):
         self.log_text.delete("1.0", tk.END)
 
     def on_closing(self):
-        self._stop_bridge()
+        if self.process is not None:
+            self.status_var.set("Stopping...")
+            self.update_idletasks()
+            self.process.stop_and_wait()
         self.destroy()
 
 

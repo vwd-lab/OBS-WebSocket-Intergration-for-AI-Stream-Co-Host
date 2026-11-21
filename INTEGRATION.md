@@ -48,8 +48,9 @@ before the first line.
 4. Add an **Image** source (your static picture) directly to the scene you
    stream. Give it the exact name you will use for `OBS_SOURCE`.
 5. Position and scale it in OBS.
-6. Do not put it inside a group; the simple scene-item lookup expects the
-   source directly in the scene.
+6. Put it directly in the scene, or in a group: for a source inside a group,
+   pass the **group's** name as `scene` (OBS looks a group's sources up like
+   a small scene's).
 
 ## Minimal wiring
 
@@ -106,9 +107,9 @@ ObsStaticOverlay(
 | `scene` | Scene containing the image. Case-sensitive. |
 | `source` | Exact source name in that scene. Case-sensitive. |
 | `enabled` | If False, every show/hide call is a no-op. |
-| `timeout_s` | WebSocket connect timeout. Short so a stopped OBS cannot stall speech. |
+| `timeout_s` | WebSocket timeout for each OBS call (done in the background for `on_ai_speaking()`/`on_ai_done()`, so it never holds up speech). |
 | `hide_on_connect` | Hide the source when the connection is established. Keep True. |
-| `retry_s` | After a failure, how long before another connection attempt. |
+| `retry_s` | After a failure, how long before the background worker tries OBS again. |
 | `client_factory` | Injectable client for tests (defaults to `obsws_python.ReqClient`). |
 
 ## Methods
@@ -120,12 +121,12 @@ All methods are thread-safe and never raise.
 | `connect()` | `bool` | Connect, resolve the scene item, hide it (when `hide_on_connect`). |
 | `disconnect()` | — | Hide (best effort), close the connection. |
 | `set_enabled(bool)` | — | Off hides and disconnects; On connects. |
-| `show()` | `bool` | Make the image visible. |
-| `hide()` | `bool` | Hide the image. |
-| `set_visible(bool)` | `bool` | Explicit form of show/hide. |
-| `on_ai_speaking()` | `bool` | Alias for `show()` (stream-tool contract). |
-| `on_ai_done()` | `bool` | Alias for `hide()` (stream-tool contract). |
-| `speaking()` | context manager | Show on enter, hide on exit. |
+| `show(wait_s=None)` | `bool` | Make the image visible. Waits for OBS (default up to `2*timeout_s+1` s) and returns True if it took the change; if not, the background worker keeps trying. |
+| `hide(wait_s=None)` | `bool` | Hide the image; waits like `show()`. |
+| `set_visible(bool)` | `bool` | Apply now on the calling thread (what the worker uses). |
+| `on_ai_speaking()` | `True` | Ask for the image to show. **Returns at once** - the background worker talks to OBS (stream-tool contract). |
+| `on_ai_done()` | `True` | Ask for the image to hide. Returns at once. |
+| `speaking()` | context manager | Show on enter, hide on exit (non-blocking, like the two above). |
 | `status()` | `dict` | Snapshot for a dashboard/health check. |
 
 Read-only properties: `enabled`, `connected`, `visible`.
@@ -139,7 +140,9 @@ Read-only properties: `enabled`, `connected`, `visible`.
 - If the source or scene is missing, `connect()` fails, logs the exact name,
   and returns False. The next call retries after `retry_s`.
 - If OBS closes mid-session, the failing call logs, drops the client, and the
-  next call reconnects. On reconnect the image is hidden again.
+  background worker reconnects every `retry_s` until OBS shows the latest
+  wished-for state (only the latest counts: show-then-hide while OBS is
+  down ends hidden). On reconnect the image is hidden first.
 - `disconnect()` hides the image (best effort) so it does not linger.
 - `enabled=False` makes all visibility calls return False without connecting.
 
@@ -149,9 +152,13 @@ Read-only properties: `enabled`, `connected`, `visible`.
 
 ## Threading and errors
 
-- A single `threading.RLock` serialises connection and visibility changes.
-- OBS calls are synchronous and bounded by `timeout_s`. They are cheap on
-  localhost; do not call them from a latency-critical audio callback.
+- `on_ai_speaking()`, `on_ai_done()` and `speaking()` only record the
+  wished-for state and return; a background daemon thread (`obs-overlay`)
+  makes OBS match. A closed or frozen OBS therefore never delays speech.
+- A single `threading.RLock` serialises the actual OBS calls, which are
+  bounded by `timeout_s`. `show()`/`hide()`/`connect()` wait for them.
+- While OBS is unreachable the same warning is printed once (again only if
+  it changes, or once a minute), not on every retry.
 - Any OBS exception is caught: the kit logs, disconnects, and retries later.
   It never propagates into the host bot.
 - `obsws-python` logs its own connection warnings through `logging`.
@@ -184,7 +191,7 @@ your_project/
 `demo_main.py` imports `input.obs_overlay`. The module itself has no layout
 assumption; adjust that one import for your package name.
 
-`obs_overlay.py` imports only the stdlib, `rich`, and (lazily)
+`obs_overlay.py` imports only the stdlib, `rich` (optional), and (lazily)
 `obsws_python`. It reads no config or environment variables.
 
 ## How this differs from the full avatar
@@ -204,8 +211,9 @@ assumption; adjust that one import for your package name.
 |---|---|
 | `ConnectionRefusedError` | OBS not running, WebSocket server off, or wrong host/port. |
 | Auth failure | Wrong `OBS_PASSWORD`. |
-| `source 'X' not found in scene 'Y'` | Wrong case/name, source not in that scene, or inside a group. |
+| `source 'X' not found in scene 'Y'` | Wrong case/name, or the source isn't in that scene. If it's inside a group, use the group's name as the scene. |
+| `obsws-python package isn't installed` | Run `python -m pip install -r requirements.txt` with the Python that runs your bot. |
 | Image never appears | `enabled=False`, `on_ai_speaking()` never called, or the scene item is behind another layer. |
 | Image stays up after speech | `on_ai_done()` not called/failed. Use `speaking()` or `finally`. |
 | Image appears at startup | `hide_on_connect=False`. Set it True. |
-| Calls block briefly | OBS host unreachable; lower `timeout_s`. |
+| `show()`/`hide()` take a few seconds | OBS host unreachable (they wait up to `2*timeout_s+1` s). The speech calls never wait. |
